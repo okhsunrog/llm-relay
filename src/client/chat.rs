@@ -4,7 +4,7 @@ use super::LlmClient;
 use super::error::LlmError;
 use crate::convert::{thinking::build_thinking_params, to_openai};
 use crate::types::anthropic::{Message, MessagesRequest, MessagesResponse};
-use crate::types::common::{Provider, ThinkingConfig, ToolDefinition};
+use crate::types::common::{Provider, ResponseFormat, ThinkingConfig, ToolDefinition};
 use crate::types::openai::{self, ChatRequest};
 
 /// Options for a chat request.
@@ -14,6 +14,7 @@ pub struct ChatOptions<'a> {
     pub tools: Option<&'a [ToolDefinition]>,
     pub thinking: Option<&'a ThinkingConfig>,
     pub temperature: Option<f32>,
+    pub response_format: Option<&'a ResponseFormat>,
 }
 
 impl LlmClient {
@@ -45,17 +46,10 @@ impl LlmClient {
     /// Use `.text()` on the result to extract just the text content.
     pub async fn complete(
         &self,
-        system: Option<&str>,
         user: &str,
-        thinking: Option<&ThinkingConfig>,
+        options: ChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
         let messages = vec![Message::user_text(user)];
-        let options = ChatOptions {
-            system,
-            tools: None,
-            thinking,
-            temperature: None,
-        };
         self.chat(&messages, options).await
     }
 
@@ -166,7 +160,7 @@ impl LlmClient {
             messages: openai_messages,
             temperature: options.temperature,
             tools,
-            response_format: None,
+            response_format: options.response_format.cloned(),
         };
 
         let url = format!("{}/v1/chat/completions", self.config.base_url);

@@ -15,14 +15,23 @@ pub struct EmbeddingsConfig {
 }
 
 impl EmbeddingsConfig {
-    /// Create config for OpenRouter embeddings.
-    pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    /// Create config for any OpenAI-compatible embeddings API.
+    pub fn openai_compatible(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
-            base_url: "https://openrouter.ai/api/v1".to_string(),
+            base_url: base_url.into(),
             api_key: api_key.into(),
             model: model.into(),
             timeout: Duration::from_secs(120),
         }
+    }
+
+    /// Create config for OpenRouter embeddings.
+    pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::openai_compatible("https://openrouter.ai/api/v1", api_key, model)
     }
 
     #[must_use]

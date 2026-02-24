@@ -60,6 +60,13 @@ impl ContentBlock {
             is_error,
         }
     }
+
+    pub fn thinking(thinking: impl Into<String>, signature: Option<String>) -> Self {
+        Self::Thinking {
+            thinking: thinking.into(),
+            signature,
+        }
+    }
 }
 
 /// An Anthropic API message.
@@ -85,7 +92,11 @@ impl Message {
     }
 
     pub fn user_text(text: impl Into<String>) -> Self {
-        Self::user(vec![ContentBlock::Text { text: text.into() }])
+        Self::user(vec![ContentBlock::text(text)])
+    }
+
+    pub fn assistant_text(text: impl Into<String>) -> Self {
+        Self::assistant(vec![ContentBlock::text(text)])
     }
 
     pub fn tool_results(results: Vec<ContentBlock>) -> Self {
