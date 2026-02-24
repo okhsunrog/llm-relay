@@ -2,6 +2,14 @@
 name = "llm-relay"
 version = "0.2.0"
 edition = "2024"
+description = "Shared types, format conversion, and HTTP client for Anthropic and OpenAI LLM APIs"
+authors = ["Danila Gornushko <me@okhsunrog.dev>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/okhsunrog/llm-relay"
+keywords = ["llm", "anthropic", "openai", "ai"]
+categories = ["api-bindings"]
+readme = "README.md"
+documentation = "https://docs.rs/llm-relay"
 
 [features]
 default = ["client"]
