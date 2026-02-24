@@ -102,10 +102,18 @@ pub struct ToolCallFunction {
 // ============ Response types ============
 
 /// OpenAI chat completion response.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChatResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub choices: Vec<Choice>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<ResponseUsage>,
 }
 
@@ -123,45 +131,54 @@ impl ChatResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Choice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
     pub message: ResponseMessage,
     #[serde(default)]
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     pub content: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ResponseToolCall>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseToolCall {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub call_type: Option<String>,
     pub function: ResponseToolCallFunction,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseToolCallFunction {
     pub name: String,
     pub arguments: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 // ============ Embeddings types ============
 
 /// OpenAI-compatible embeddings request.
-#[cfg(feature = "embeddings")]
 #[derive(Debug, Serialize)]
 pub struct EmbeddingsRequest {
     pub model: String,
@@ -169,13 +186,11 @@ pub struct EmbeddingsRequest {
 }
 
 /// OpenAI-compatible embeddings response.
-#[cfg(feature = "embeddings")]
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingsResponse {
     pub data: Vec<EmbeddingObject>,
 }
 
-#[cfg(feature = "embeddings")]
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingObject {
     pub embedding: Vec<f32>,

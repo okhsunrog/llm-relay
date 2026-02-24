@@ -27,9 +27,39 @@ pub enum ContentBlock {
     ToolResult {
         tool_use_id: String,
         content: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        is_error: Option<bool>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
     },
+}
+
+impl ContentBlock {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    pub fn tool_use(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        input: serde_json::Value,
+    ) -> Self {
+        Self::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    pub fn tool_result(
+        tool_use_id: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+            is_error,
+        }
+    }
 }
 
 /// An Anthropic API message.
@@ -105,7 +135,7 @@ pub struct MessagesResponse {
     #[serde(default)]
     pub model: Option<String>,
     pub content: Vec<ContentBlock>,
-    pub stop_reason: String,
+    pub stop_reason: StopReason,
     #[serde(default)]
     pub usage: Option<Usage>,
 }
@@ -140,14 +170,9 @@ impl MessagesResponse {
         }
     }
 
-    /// Get the stop reason as a normalized StopReason enum.
-    pub fn stop(&self) -> StopReason {
-        StopReason::from_anthropic(&self.stop_reason)
-    }
-
     /// Check if the model wants to call tools.
     pub fn has_tool_use(&self) -> bool {
-        self.stop().is_tool_use()
+        self.stop_reason.is_tool_use()
     }
 
     /// Extract tool use blocks.

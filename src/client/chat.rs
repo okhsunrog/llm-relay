@@ -1,27 +1,19 @@
 use tracing::{debug, error, info};
 
-use super::error::LlmError;
 use super::LlmClient;
+use super::error::LlmError;
 use crate::convert::{thinking::build_thinking_params, to_openai};
 use crate::types::anthropic::{Message, MessagesRequest, MessagesResponse};
 use crate::types::common::{Provider, ThinkingConfig, ToolDefinition};
 use crate::types::openai::{self, ChatRequest};
 
 /// Options for a chat request.
+#[derive(Default)]
 pub struct ChatOptions<'a> {
     pub system: Option<&'a str>,
     pub tools: Option<&'a [ToolDefinition]>,
     pub thinking: Option<&'a ThinkingConfig>,
-}
-
-impl Default for ChatOptions<'_> {
-    fn default() -> Self {
-        Self {
-            system: None,
-            tools: None,
-            thinking: None,
-        }
-    }
+    pub temperature: Option<f32>,
 }
 
 impl LlmClient {
@@ -47,33 +39,29 @@ impl LlmClient {
         }
     }
 
-    /// Simple text-in text-out call.
+    /// Simple text-in, full-response-out call.
     ///
-    /// Sends a single user message and returns the text response.
+    /// Sends a single user message and returns the full response.
+    /// Use `.text()` on the result to extract just the text content.
     pub async fn complete(
         &self,
         system: Option<&str>,
         user: &str,
         thinking: Option<&ThinkingConfig>,
-    ) -> Result<String, LlmError> {
+    ) -> Result<MessagesResponse, LlmError> {
         let messages = vec![Message::user_text(user)];
         let options = ChatOptions {
             system,
             tools: None,
             thinking,
+            temperature: None,
         };
-        let resp = self.chat(&messages, options).await?;
-        let text = resp.text();
-        if text.is_empty() {
-            Err(LlmError::EmptyResponse)
-        } else {
-            Ok(text)
-        }
+        self.chat(&messages, options).await
     }
 
     /// Send a raw OpenAI-format chat request.
     ///
-    /// For projects that use OpenAI as their native format (chai-rs, fridge_tracker).
+    /// Bypasses Anthropic format conversion — sends and receives OpenAI types directly.
     pub async fn chat_openai_raw(
         &self,
         request: &ChatRequest,
@@ -170,13 +158,13 @@ impl LlmClient {
     ) -> Result<MessagesResponse, LlmError> {
         let openai_messages = to_openai::messages_to_openai(options.system, messages);
 
-        let tools = options.tools.map(|t| to_openai::tools_to_openai(t));
+        let tools = options.tools.map(to_openai::tools_to_openai);
 
         let request_body = openai::ChatRequest {
             model: self.config.model.clone(),
             max_tokens: Some(self.config.max_tokens),
             messages: openai_messages,
-            temperature: None,
+            temperature: options.temperature,
             tools,
             response_format: None,
         };
@@ -208,8 +196,7 @@ impl LlmClient {
             LlmError::ParseResponse(e.to_string())
         })?;
 
-        let resp = to_openai::response_to_anthropic(openai_resp)
-            .map_err(|e| LlmError::Conversion(e))?;
+        let resp = to_openai::response_to_anthropic(openai_resp).map_err(LlmError::Conversion)?;
 
         info!(
             "LLM responded (stop_reason: {}, content blocks: {})",

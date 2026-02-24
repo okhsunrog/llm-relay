@@ -25,8 +25,15 @@ impl EmbeddingsConfig {
         }
     }
 
+    #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
         self
     }
 }
@@ -51,17 +58,21 @@ impl EmbeddingsClient {
     /// Returns vectors sorted by input order.
     pub async fn create_embeddings(
         &self,
-        texts: Vec<String>,
+        texts: &[impl AsRef<str>],
     ) -> Result<Vec<Vec<f32>>, LlmError> {
         let expected_count = texts.len();
+        let input: Vec<String> = texts.iter().map(|t| t.as_ref().to_string()).collect();
 
         let request = EmbeddingsRequest {
             model: self.config.model.clone(),
-            input: texts,
+            input,
         };
 
         let url = format!("{}/embeddings", self.config.base_url);
-        debug!("POST {url} (model: {}, count: {expected_count})", self.config.model);
+        debug!(
+            "POST {url} (model: {}, count: {expected_count})",
+            self.config.model
+        );
 
         let response = self
             .http
@@ -104,9 +115,7 @@ impl EmbeddingsClient {
 
     /// Create embedding for a single text.
     pub async fn create_embedding(&self, text: &str) -> Result<Vec<f32>, LlmError> {
-        let mut results = self.create_embeddings(vec![text.to_string()]).await?;
-        results
-            .pop()
-            .ok_or(LlmError::EmptyResponse)
+        let mut results = self.create_embeddings(&[text]).await?;
+        results.pop().ok_or(LlmError::EmptyResponse)
     }
 }

@@ -107,7 +107,7 @@ pub fn inbound_request_to_anthropic(req: InboundChatRequest) -> Value {
                     }));
                 }
             }
-            "user" | _ => {
+            _ => {
                 let content_blocks = match msg.content {
                     InboundContent::Text(t) => vec![json!({"type": "text", "text": t})],
                     InboundContent::Parts(parts) => parts
@@ -166,10 +166,7 @@ pub fn inbound_request_to_anthropic(req: InboundChatRequest) -> Value {
 
     // Convert tools
     if let Some(tools) = req.tools {
-        let anthropic_tools: Vec<Value> = tools
-            .into_iter()
-            .map(openai_tool_to_anthropic)
-            .collect();
+        let anthropic_tools: Vec<Value> = tools.into_iter().map(openai_tool_to_anthropic).collect();
         body["tools"] = json!(anthropic_tools);
     }
 
@@ -182,14 +179,8 @@ pub fn inbound_request_to_anthropic(req: InboundChatRequest) -> Value {
 /// Anthropic: `{ "name", "description", "input_schema" }`
 pub fn openai_tool_to_anthropic(tool: Value) -> Value {
     if let Some(function) = tool.get("function") {
-        let name = function
-            .get("name")
-            .cloned()
-            .unwrap_or(json!("unknown"));
-        let description = function
-            .get("description")
-            .cloned()
-            .unwrap_or(json!(""));
+        let name = function.get("name").cloned().unwrap_or(json!("unknown"));
+        let description = function.get("description").cloned().unwrap_or(json!(""));
         let parameters = function
             .get("parameters")
             .cloned()

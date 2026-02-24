@@ -1,10 +1,10 @@
 use tracing::warn;
 
 use crate::types::anthropic::{ContentBlock, Message, MessagesResponse};
-use crate::types::common::ToolDefinition;
+use crate::types::common::{StopReason, ToolDefinition};
 use crate::types::openai::{
-    ChatMessage, ChatResponse, Choice, ResponseMessage, ResponseToolCall,
-    ResponseToolCallFunction, ResponseUsage, Tool, ToolCallFunction, ToolCallOut, ToolFunction,
+    ChatMessage, ChatResponse, Choice, ResponseMessage, ResponseToolCall, ResponseToolCallFunction,
+    ResponseUsage, Tool, ToolCallFunction, ToolCallOut, ToolFunction,
 };
 
 /// Convert Anthropic messages + system prompt to OpenAI message format.
@@ -13,10 +13,7 @@ use crate::types::openai::{
 /// - Assistant text → `content`, ToolUse → `tool_calls` array
 /// - User messages with ToolResult → multiple `role: "tool"` messages
 /// - Thinking blocks are silently skipped
-pub fn messages_to_openai(
-    system: Option<&str>,
-    messages: &[Message],
-) -> Vec<ChatMessage> {
+pub fn messages_to_openai(system: Option<&str>, messages: &[Message]) -> Vec<ChatMessage> {
     let mut out = Vec::new();
 
     if let Some(system) = system {
@@ -139,16 +136,16 @@ pub fn response_to_anthropic(resp: ChatResponse) -> Result<MessagesResponse, Str
 
     let mut content: Vec<ContentBlock> = Vec::new();
 
-    if let Some(text) = choice.message.content {
-        if !text.is_empty() {
-            content.push(ContentBlock::Text { text });
-        }
+    if let Some(text) = choice.message.content
+        && !text.is_empty()
+    {
+        content.push(ContentBlock::Text { text });
     }
 
     if let Some(tool_calls) = choice.message.tool_calls {
         for tc in tool_calls {
-            let input: serde_json::Value =
-                serde_json::from_str(&tc.function.arguments).unwrap_or_else(|e| {
+            let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                .unwrap_or_else(|e| {
                     warn!(
                         "Failed to parse tool arguments: {} — {}",
                         tc.function.arguments, e
@@ -163,22 +160,18 @@ pub fn response_to_anthropic(resp: ChatResponse) -> Result<MessagesResponse, Str
         }
     }
 
-    let stop_reason = match choice.finish_reason.as_deref().unwrap_or("stop") {
-        "tool_calls" => "tool_use".to_string(),
-        "stop" => "end_turn".to_string(),
-        "length" => "max_tokens".to_string(),
-        other => other.to_string(),
-    };
+    let stop_reason = StopReason::from_openai(choice.finish_reason.as_deref().unwrap_or("stop"));
 
     Ok(MessagesResponse {
-        id: None,
-        model: None,
+        id: resp.id,
+        model: resp.model,
         content,
         stop_reason,
         usage: resp.usage.map(|u| crate::types::common::Usage {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
-            ..Default::default()
+            cache_creation_input_tokens: u.cache_creation_input_tokens,
+            cache_read_input_tokens: u.cache_read_input_tokens,
         }),
     })
 }
@@ -198,6 +191,7 @@ pub fn anthropic_response_to_openai(resp: MessagesResponse) -> ChatResponse {
             ContentBlock::ToolUse { id, name, input } => {
                 tool_calls.push(ResponseToolCall {
                     id: id.clone(),
+                    call_type: Some("function".to_string()),
                     function: ResponseToolCallFunction {
                         name: name.clone(),
                         arguments: serde_json::to_string(input).unwrap_or_default(),
@@ -220,22 +214,30 @@ pub fn anthropic_response_to_openai(resp: MessagesResponse) -> ChatResponse {
         Some(reasoning_parts.join(""))
     };
 
-    let finish_reason = match resp.stop_reason.as_str() {
-        "end_turn" => "stop",
-        "tool_use" => "tool_calls",
-        "max_tokens" => "length",
-        other => other,
-    };
+    let finish_reason = resp.stop_reason.to_openai();
 
     let usage = resp.usage.map(|u| ResponseUsage {
         prompt_tokens: u.input_tokens,
         completion_tokens: u.output_tokens,
         total_tokens: u.input_tokens + u.output_tokens,
+        cache_creation_input_tokens: u.cache_creation_input_tokens,
+        cache_read_input_tokens: u.cache_read_input_tokens,
     });
 
     ChatResponse {
+        id: resp.id.clone(),
+        object: Some("chat.completion".to_string()),
+        created: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        ),
+        model: resp.model.clone(),
         choices: vec![Choice {
+            index: Some(0),
             message: ResponseMessage {
+                role: Some("assistant".to_string()),
                 content,
                 reasoning_content,
                 tool_calls: if tool_calls.is_empty() {

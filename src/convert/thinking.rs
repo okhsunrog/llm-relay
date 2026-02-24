@@ -1,3 +1,5 @@
+use serde_json::Value;
+
 use crate::types::anthropic::{OutputConfig, ThinkingParam};
 use crate::types::common::{EffortLevel, ThinkingConfig};
 
@@ -27,6 +29,19 @@ pub fn build_thinking_params(
         ),
         None => (None, None),
     }
+}
+
+/// Like [`build_thinking_params`], but returns `serde_json::Value` directly.
+///
+/// Useful for proxy scenarios that work with raw JSON throughout.
+pub fn build_thinking_params_json(
+    config: Option<&ThinkingConfig>,
+) -> (Option<Value>, Option<Value>) {
+    let (thinking, output_config) = build_thinking_params(config);
+    (
+        thinking.and_then(|tp| serde_json::to_value(&tp).ok()),
+        output_config.and_then(|oc| serde_json::to_value(&oc).ok()),
+    )
 }
 
 /// Parse a model suffix like `"claude-sonnet-4-5(medium)"` into `(base_model, effort_string)`.

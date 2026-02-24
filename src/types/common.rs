@@ -18,14 +18,6 @@ impl Provider {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "anthropic" => Some(Self::Anthropic),
-            "openai" => Some(Self::OpenAiCompatible),
-            _ => None,
-        }
-    }
-
     pub fn default_base_url(&self) -> &'static str {
         match self {
             Self::Anthropic => "https://api.anthropic.com",
@@ -40,6 +32,18 @@ impl std::fmt::Display for Provider {
     }
 }
 
+impl std::str::FromStr for Provider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "anthropic" => Ok(Self::Anthropic),
+            "openai" => Ok(Self::OpenAiCompatible),
+            _ => Err(format!("unknown provider: {s}")),
+        }
+    }
+}
+
 /// Extended thinking configuration.
 ///
 /// Extended thinking lets Claude think step-by-step before responding.
@@ -48,7 +52,7 @@ impl std::fmt::Display for Provider {
 ///   Supported on Claude Opus 4.6 and Sonnet 4.6.
 /// - **Enabled**: Manual extended thinking with an explicit token budget.
 ///   For older models (Sonnet 4.5, etc.) or when a specific budget is needed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ThinkingConfig {
     /// Adaptive thinking — Claude decides when and how much to think.
@@ -57,9 +61,7 @@ pub enum ThinkingConfig {
         effort: EffortLevel,
     },
     /// Manual extended thinking with an explicit token budget.
-    Enabled {
-        budget_tokens: u32,
-    },
+    Enabled { budget_tokens: u32 },
 }
 
 /// Effort level for adaptive thinking.
@@ -83,16 +85,6 @@ impl EffortLevel {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "max" => Some(Self::Max),
-            "high" => Some(Self::High),
-            "medium" | "med" => Some(Self::Medium),
-            "low" | "minimal" => Some(Self::Low),
-            _ => None,
-        }
-    }
-
     pub fn all() -> &'static [EffortLevel] {
         &[Self::Max, Self::High, Self::Medium, Self::Low]
     }
@@ -104,6 +96,20 @@ impl std::fmt::Display for EffortLevel {
     }
 }
 
+impl std::str::FromStr for EffortLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "max" => Ok(Self::Max),
+            "high" => Ok(Self::High),
+            "medium" | "med" => Ok(Self::Medium),
+            "low" | "minimal" => Ok(Self::Low),
+            _ => Err(format!("unknown effort level: {s}")),
+        }
+    }
+}
+
 /// Provider-agnostic tool definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -112,19 +118,33 @@ pub struct ToolDefinition {
     pub input_schema: serde_json::Value,
 }
 
+impl ToolDefinition {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        input_schema: serde_json::Value,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            input_schema,
+        }
+    }
+}
+
 /// Token usage information.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_creation_input_tokens: Option<u32>,
+    pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read_input_tokens: Option<u32>,
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 impl Usage {
-    pub fn total_tokens(&self) -> u32 {
+    pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
 }
@@ -145,6 +165,8 @@ impl ResponseFormat {
 }
 
 /// Stop reason, normalized across providers.
+///
+/// Serializes/deserializes using Anthropic wire format (`"end_turn"`, `"tool_use"`, `"max_tokens"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopReason {
     EndTurn,
@@ -192,5 +214,24 @@ impl StopReason {
 
     pub fn is_tool_use(&self) -> bool {
         matches!(self, Self::ToolUse)
+    }
+}
+
+impl std::fmt::Display for StopReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_anthropic())
+    }
+}
+
+impl Serialize for StopReason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.to_anthropic())
+    }
+}
+
+impl<'de> Deserialize<'de> for StopReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from_anthropic(&s))
     }
 }
