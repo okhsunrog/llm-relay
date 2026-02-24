@@ -1,6 +1,6 @@
 [package]
 name = "llm-relay"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Shared types, format conversion, and HTTP client for Anthropic and OpenAI LLM APIs"
 authors = ["Danila Gornushko <me@okhsunrog.dev>"]
