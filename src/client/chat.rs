@@ -17,6 +17,9 @@ pub struct ChatOptions<'a> {
     pub thinking: Option<&'a ThinkingConfig>,
     pub temperature: Option<f32>,
     pub response_format: Option<&'a ResponseFormat>,
+    /// Require one named tool. The transport maps this to the provider's
+    /// native tool-choice wire format.
+    pub required_tool: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,9 +66,8 @@ impl LlmClient {
 
     /// Complete a request with a strict JSON Schema response and deserialize it.
     ///
-    /// This uses the OpenAI-compatible `response_format.json_schema` contract.
-    /// Native Anthropic Messages clients do not share that wire contract and
-    /// are rejected instead of silently falling back to prompt-only JSON.
+    /// OpenAI-compatible providers use `response_format.json_schema`. Native
+    /// Anthropic providers use a required tool carrying the same schema.
     pub async fn complete_structured<T>(
         &self,
         user: &str,
@@ -75,11 +77,6 @@ impl LlmClient {
     where
         T: DeserializeOwned + JsonSchema,
     {
-        if self.config.provider != Provider::OpenAiCompatible {
-            return Err(LlmError::Config(
-                "strict JSON Schema output requires an OpenAI-compatible provider".into(),
-            ));
-        }
         if schema_name.is_empty()
             || schema_name.len() > 64
             || !schema_name.chars().all(|character| {
@@ -94,27 +91,71 @@ impl LlmClient {
 
         let schema = serde_json::to_value(schemars::schema_for!(T))
             .map_err(|error| LlmError::Config(error.to_string()))?;
-        let response_format = ResponseFormat::json_schema(schema_name, schema, true);
-        let response = self
-            .complete(
-                user,
-                ChatOptions {
-                    system,
-                    temperature: Some(0.0),
-                    response_format: Some(&response_format),
-                    ..ChatOptions::default()
-                },
-            )
-            .await?;
-        let text = response.text();
-        if text.trim().is_empty() {
-            return Err(LlmError::EmptyResponse);
-        }
-        let data =
-            serde_json::from_str(&text).map_err(|error| LlmError::InvalidStructuredOutput {
-                error: error.to_string(),
-                body: text.chars().take(4_096).collect(),
-            })?;
+        let response = match self.config.provider {
+            Provider::OpenAiCompatible => {
+                let response_format = ResponseFormat::json_schema(schema_name, schema, true);
+                self.complete(
+                    user,
+                    ChatOptions {
+                        system,
+                        temperature: Some(0.0),
+                        response_format: Some(&response_format),
+                        ..ChatOptions::default()
+                    },
+                )
+                .await?
+            }
+            Provider::Anthropic => {
+                let tools = [ToolDefinition::new(
+                    schema_name,
+                    "Submit the structured result using exactly this schema.",
+                    schema,
+                )];
+                self.complete(
+                    user,
+                    ChatOptions {
+                        system,
+                        temperature: Some(0.0),
+                        tools: Some(&tools),
+                        required_tool: Some(schema_name),
+                        ..ChatOptions::default()
+                    },
+                )
+                .await?
+            }
+        };
+        let data = match self.config.provider {
+            Provider::OpenAiCompatible => {
+                let text = response.text();
+                if text.trim().is_empty() {
+                    return Err(LlmError::EmptyResponse);
+                }
+                serde_json::from_str(&text).map_err(|error| LlmError::InvalidStructuredOutput {
+                    error: error.to_string(),
+                    body: text.chars().take(4_096).collect(),
+                })?
+            }
+            Provider::Anthropic => {
+                let input = response.content.iter().find_map(|block| match block {
+                    crate::types::anthropic::ContentBlock::ToolUse { name, input, .. }
+                        if name == schema_name =>
+                    {
+                        Some(input.clone())
+                    }
+                    _ => None,
+                });
+                let input = input.ok_or_else(|| LlmError::InvalidStructuredOutput {
+                    error: format!("provider did not call required tool {schema_name}"),
+                    body: response.text().chars().take(4_096).collect(),
+                })?;
+                serde_json::from_value(input.clone()).map_err(|error| {
+                    LlmError::InvalidStructuredOutput {
+                        error: error.to_string(),
+                        body: input.to_string().chars().take(4_096).collect(),
+                    }
+                })?
+            }
+        };
         Ok(StructuredResponse {
             data,
             usage: response.usage.unwrap_or_default(),
@@ -161,6 +202,9 @@ impl LlmClient {
             tools: options.tools.map(|t| t.to_vec()),
             thinking,
             output_config,
+            tool_choice: options
+                .required_tool
+                .map(|name| serde_json::json!({"type": "tool", "name": name})),
         };
 
         let url = self.endpoint("v1/messages");
@@ -194,6 +238,9 @@ impl LlmClient {
             temperature: options.temperature,
             tools,
             response_format: options.response_format.cloned(),
+            tool_choice: options
+                .required_tool
+                .map(|name| serde_json::json!({"type": "function", "function": {"name": name}})),
         };
 
         let url = self.endpoint("chat/completions");

@@ -59,6 +59,9 @@ impl LlmClient {
                     temperature: options.temperature,
                     tools: options.tools.map(to_openai::tools_to_openai),
                     response_format: options.response_format.cloned(),
+                    tool_choice: options.required_tool.map(
+                        |name| serde_json::json!({"type": "function", "function": {"name": name}}),
+                    ),
                 };
                 let mut value = serde_json::to_value(request)
                     .map_err(|error| LlmError::Client(error.to_string()))?;
@@ -76,6 +79,9 @@ impl LlmClient {
                     tools: options.tools.map(<[_]>::to_vec),
                     thinking,
                     output_config,
+                    tool_choice: options
+                        .required_tool
+                        .map(|name| serde_json::json!({"type": "tool", "name": name})),
                 };
                 let mut value = serde_json::to_value(request)
                     .map_err(|error| LlmError::Client(error.to_string()))?;

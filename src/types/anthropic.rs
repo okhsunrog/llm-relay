@@ -136,6 +136,8 @@ pub struct MessagesRequest {
     pub thinking: Option<ThinkingParam>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<OutputConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 /// Anthropic Messages API response.

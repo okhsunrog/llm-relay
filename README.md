@@ -121,8 +121,9 @@ println!("{:?}", response.data.values);
 # }
 ```
 
-The native Anthropic Messages transport rejects this method because its wire
-format does not use OpenAI's `response_format` contract.
+OpenAI-compatible transports use strict `response_format.json_schema`. Native
+Anthropic Messages transports require a tool with the generated schema and
+deserialize its input through the same typed API.
 
 ## Streaming
 
