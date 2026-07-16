@@ -138,6 +138,11 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
                 cache_read_input_tokens: usage
                     .pointer("/prompt_tokens_details/cached_tokens")
                     .and_then(serde_json::Value::as_u64),
+                reasoning_tokens: usage
+                    .pointer("/completion_tokens_details/reasoning_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default(),
+                cost: usage.get("cost").and_then(serde_json::Value::as_f64),
             },
         }));
     }
@@ -315,6 +320,8 @@ fn anthropic_usage(value: &serde_json::Value) -> Usage {
         cache_read_input_tokens: value
             .get("cache_read_input_tokens")
             .and_then(serde_json::Value::as_u64),
+        reasoning_tokens: 0,
+        cost: None,
     }
 }
 

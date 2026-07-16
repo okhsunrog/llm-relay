@@ -142,6 +142,15 @@ pub fn response_to_anthropic(resp: ChatResponse) -> Result<MessagesResponse, Str
         content.push(ContentBlock::Text { text });
     }
 
+    if let Some(thinking) = choice.message.reasoning_content
+        && !thinking.is_empty()
+    {
+        content.push(ContentBlock::Thinking {
+            thinking,
+            signature: None,
+        });
+    }
+
     if let Some(tool_calls) = choice.message.tool_calls {
         for tc in tool_calls {
             let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
@@ -172,6 +181,12 @@ pub fn response_to_anthropic(resp: ChatResponse) -> Result<MessagesResponse, Str
             output_tokens: u.completion_tokens,
             cache_creation_input_tokens: u.cache_creation_input_tokens,
             cache_read_input_tokens: u.cache_read_input_tokens,
+            reasoning_tokens: u
+                .completion_tokens_details
+                .as_ref()
+                .map(|details| details.reasoning_tokens)
+                .unwrap_or_default(),
+            cost: u.cost,
         }),
     })
 }
@@ -222,6 +237,12 @@ pub fn anthropic_response_to_openai(resp: MessagesResponse) -> ChatResponse {
         total_tokens: u.input_tokens + u.output_tokens,
         cache_creation_input_tokens: u.cache_creation_input_tokens,
         cache_read_input_tokens: u.cache_read_input_tokens,
+        cost: u.cost,
+        completion_tokens_details: (u.reasoning_tokens > 0).then_some(
+            crate::types::openai::CompletionTokensDetails {
+                reasoning_tokens: u.reasoning_tokens,
+            },
+        ),
     });
 
     ChatResponse {
@@ -249,5 +270,44 @@ pub fn anthropic_response_to_openai(resp: MessagesResponse) -> ChatResponse {
             finish_reason: Some(finish_reason.to_string()),
         }],
         usage,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_openrouter_reasoning_and_cost_metadata() {
+        let response: ChatResponse = serde_json::from_value(serde_json::json!({
+            "id": "response",
+            "model": "reasoning-model",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "OK",
+                    "reasoning": "private reasoning"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 5,
+                "total_tokens": 8,
+                "cost": 0.001,
+                "completion_tokens_details": { "reasoning_tokens": 4 }
+            }
+        }))
+        .expect("OpenAI-compatible response");
+        let canonical = response_to_anthropic(response).expect("canonical response");
+        assert_eq!(canonical.text(), "OK");
+        assert_eq!(
+            canonical.thinking_text().as_deref(),
+            Some("private reasoning")
+        );
+        let usage = canonical.usage.expect("usage");
+        assert_eq!(usage.reasoning_tokens, 4);
+        assert_eq!(usage.cost, Some(0.001));
     }
 }
