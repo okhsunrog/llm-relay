@@ -155,18 +155,69 @@ impl Usage {
     }
 }
 
-/// Response format specification (for JSON mode).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseFormat {
-    #[serde(rename = "type")]
-    pub format_type: String,
+/// Response format specification for OpenAI-compatible APIs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    JsonObject,
+    JsonSchema { json_schema: JsonSchemaFormat },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JsonSchemaFormat {
+    pub name: String,
+    pub strict: bool,
+    pub schema: serde_json::Value,
 }
 
 impl ResponseFormat {
     pub fn json_object() -> Self {
-        Self {
-            format_type: "json_object".to_string(),
+        Self::JsonObject
+    }
+
+    pub fn json_schema(name: impl Into<String>, schema: serde_json::Value, strict: bool) -> Self {
+        Self::JsonSchema {
+            json_schema: JsonSchemaFormat {
+                name: name.into(),
+                strict,
+                schema,
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod response_format_tests {
+    use super::*;
+
+    #[test]
+    fn serializes_strict_json_schema_for_openai_compatible_apis() {
+        let format = ResponseFormat::json_schema(
+            "entities",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "entities": { "type": "array" } },
+                "required": ["entities"],
+                "additionalProperties": false
+            }),
+            true,
+        );
+        assert_eq!(
+            serde_json::to_value(format).expect("serialize response format"),
+            serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "entities",
+                    "strict": true,
+                    "schema": {
+                        "type": "object",
+                        "properties": { "entities": { "type": "array" } },
+                        "required": ["entities"],
+                        "additionalProperties": false
+                    }
+                }
+            })
+        );
     }
 }
 

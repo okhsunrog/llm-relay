@@ -11,7 +11,9 @@ pub use types::common::{
 };
 
 #[cfg(feature = "client")]
-pub use client::{AuthScheme, ChatOptions, ClientConfig, LlmClient, LlmError, RetryPolicy};
+pub use client::{
+    AuthScheme, ChatOptions, ClientConfig, LlmClient, LlmError, RetryPolicy, StructuredResponse,
+};
 
 #[cfg(feature = "streaming")]
 pub use client::{ChatStream, StreamEvent};

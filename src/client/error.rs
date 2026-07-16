@@ -16,6 +16,9 @@ pub enum LlmError {
     #[error("Failed to parse response: {0}")]
     ParseResponse(String),
 
+    #[error("Structured response did not match the requested schema: {error}; body: {body}")]
+    InvalidStructuredOutput { error: String, body: String },
+
     #[error("Empty response from API")]
     EmptyResponse,
 

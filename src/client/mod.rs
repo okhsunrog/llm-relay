@@ -12,7 +12,7 @@ pub mod rig;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 
-pub use chat::ChatOptions;
+pub use chat::{ChatOptions, StructuredResponse};
 #[cfg(feature = "embeddings")]
 pub use embeddings::{EmbeddingsClient, EmbeddingsConfig};
 pub use error::LlmError;

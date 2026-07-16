@@ -96,6 +96,34 @@ let client = LlmClient::new(ClientConfig::local_openai_compatible(
 # }
 ```
 
+## Structured output
+
+OpenAI-compatible providers that implement `response_format.json_schema` can
+return a value validated against a schema generated from the Rust type:
+
+```rust,no_run
+use llm_relay::{ClientConfig, LlmClient};
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+#[derive(Deserialize, JsonSchema)]
+struct Keywords {
+    values: Vec<String>,
+}
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let client = LlmClient::new(ClientConfig::openrouter("secret", "google/gemini-3.1-flash-lite"))?;
+let response = client
+    .complete_structured::<Keywords>("Extract keywords from: Rust and SQLite", "keywords", None)
+    .await?;
+println!("{:?}", response.data.values);
+# Ok(())
+# }
+```
+
+The native Anthropic Messages transport rejects this method because its wire
+format does not use OpenAI's `response_format` contract.
+
 ## Streaming
 
 ```rust,no_run

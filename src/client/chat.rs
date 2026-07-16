@@ -1,3 +1,5 @@
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use tracing::{debug, info};
 
 use super::LlmClient;
@@ -15,6 +17,12 @@ pub struct ChatOptions<'a> {
     pub thinking: Option<&'a ThinkingConfig>,
     pub temperature: Option<f32>,
     pub response_format: Option<&'a ResponseFormat>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructuredResponse<T> {
+    pub data: T,
+    pub usage: crate::types::common::Usage,
 }
 
 impl LlmClient {
@@ -53,6 +61,66 @@ impl LlmClient {
         self.chat(&messages, options).await
     }
 
+    /// Complete a request with a strict JSON Schema response and deserialize it.
+    ///
+    /// This uses the OpenAI-compatible `response_format.json_schema` contract.
+    /// Native Anthropic Messages clients do not share that wire contract and
+    /// are rejected instead of silently falling back to prompt-only JSON.
+    pub async fn complete_structured<T>(
+        &self,
+        user: &str,
+        schema_name: &str,
+        system: Option<&str>,
+    ) -> Result<StructuredResponse<T>, LlmError>
+    where
+        T: DeserializeOwned + JsonSchema,
+    {
+        if self.config.provider != Provider::OpenAiCompatible {
+            return Err(LlmError::Config(
+                "strict JSON Schema output requires an OpenAI-compatible provider".into(),
+            ));
+        }
+        if schema_name.is_empty()
+            || schema_name.len() > 64
+            || !schema_name.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            })
+        {
+            return Err(LlmError::Config(
+                "schema name must contain 1 to 64 ASCII letters, digits, underscores, or hyphens"
+                    .into(),
+            ));
+        }
+
+        let schema = serde_json::to_value(schemars::schema_for!(T))
+            .map_err(|error| LlmError::Config(error.to_string()))?;
+        let response_format = ResponseFormat::json_schema(schema_name, schema, true);
+        let response = self
+            .complete(
+                user,
+                ChatOptions {
+                    system,
+                    temperature: Some(0.0),
+                    response_format: Some(&response_format),
+                    ..ChatOptions::default()
+                },
+            )
+            .await?;
+        let text = response.text();
+        if text.trim().is_empty() {
+            return Err(LlmError::EmptyResponse);
+        }
+        let data =
+            serde_json::from_str(&text).map_err(|error| LlmError::InvalidStructuredOutput {
+                error: error.to_string(),
+                body: text.chars().take(4_096).collect(),
+            })?;
+        Ok(StructuredResponse {
+            data,
+            usage: response.usage.unwrap_or_default(),
+        })
+    }
+
     /// Send a raw OpenAI-format chat request.
     ///
     /// Bypasses Anthropic format conversion — sends and receives OpenAI types directly.
@@ -77,6 +145,12 @@ impl LlmClient {
         messages: &[Message],
         options: &ChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
+        if options.response_format.is_some() {
+            return Err(LlmError::Config(
+                "response_format is not supported by the native Anthropic Messages transport"
+                    .into(),
+            ));
+        }
         let (thinking, output_config) = build_thinking_params(options.thinking);
 
         let request_body = MessagesRequest {
