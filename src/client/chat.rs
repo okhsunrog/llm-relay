@@ -1,4 +1,4 @@
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use super::LlmClient;
 use super::error::LlmError;
@@ -60,32 +60,12 @@ impl LlmClient {
         &self,
         request: &ChatRequest,
     ) -> Result<openai::ChatResponse, LlmError> {
-        let url = format!("{}/v1/chat/completions", self.config.base_url);
+        let url = self.endpoint("chat/completions");
         debug!("POST {url} (model: {})", request.model);
 
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("content-type", "application/json")
-            .json(request)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!("API error {status}: {body}");
-            return Err(LlmError::ApiError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
-        let resp: openai::ChatResponse = response.json().await.map_err(|e| {
-            error!("Failed to parse response: {e}");
-            LlmError::ParseResponse(e.to_string())
-        })?;
+        let body = self.send_json(&url, request).await?;
+        let resp: openai::ChatResponse = serde_json::from_slice(&body)
+            .map_err(|error| LlmError::ParseResponse(error.to_string()))?;
 
         Ok(resp)
     }
@@ -109,33 +89,12 @@ impl LlmClient {
             output_config,
         };
 
-        let url = format!("{}/v1/messages", self.config.base_url);
+        let url = self.endpoint("v1/messages");
         debug!("POST {url} (model: {})", self.config.model);
 
-        let response = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!("API error {status}: {body}");
-            return Err(LlmError::ApiError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
-        let resp: MessagesResponse = response.json().await.map_err(|e| {
-            error!("Failed to parse response: {e}");
-            LlmError::ParseResponse(e.to_string())
-        })?;
+        let body = self.send_json(&url, &request_body).await?;
+        let resp: MessagesResponse = serde_json::from_slice(&body)
+            .map_err(|error| LlmError::ParseResponse(error.to_string()))?;
 
         info!(
             "LLM responded (stop_reason: {}, content blocks: {})",
@@ -163,32 +122,12 @@ impl LlmClient {
             response_format: options.response_format.cloned(),
         };
 
-        let url = format!("{}/v1/chat/completions", self.config.base_url);
+        let url = self.endpoint("chat/completions");
         debug!("POST {url} (model: {})", self.config.model);
 
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!("API error {status}: {body}");
-            return Err(LlmError::ApiError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
-        let openai_resp: openai::ChatResponse = response.json().await.map_err(|e| {
-            error!("Failed to parse response: {e}");
-            LlmError::ParseResponse(e.to_string())
-        })?;
+        let body = self.send_json(&url, &request_body).await?;
+        let openai_resp: openai::ChatResponse = serde_json::from_slice(&body)
+            .map_err(|error| LlmError::ParseResponse(error.to_string()))?;
 
         let resp = to_openai::response_to_anthropic(openai_resp).map_err(LlmError::Conversion)?;
 

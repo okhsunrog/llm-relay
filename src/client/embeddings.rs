@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use tracing::{debug, error};
+use tracing::debug;
 
-use super::error::LlmError;
+use super::{AuthScheme, ClientConfig, LlmClient, RetryPolicy, error::LlmError};
 use crate::types::openai::{EmbeddingsRequest, EmbeddingsResponse};
 
 /// Configuration for the embeddings client.
@@ -12,6 +12,13 @@ pub struct EmbeddingsConfig {
     pub api_key: String,
     pub model: String,
     pub timeout: Duration,
+    pub dimensions: Option<u32>,
+    pub input_type: Option<String>,
+    pub encoding_format: Option<String>,
+    pub auth_scheme: AuthScheme,
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub retry_policy: RetryPolicy,
+    pub max_response_bytes: usize,
 }
 
 impl EmbeddingsConfig {
@@ -26,12 +33,23 @@ impl EmbeddingsConfig {
             api_key: api_key.into(),
             model: model.into(),
             timeout: Duration::from_secs(120),
+            dimensions: None,
+            input_type: None,
+            encoding_format: None,
+            auth_scheme: AuthScheme::Bearer,
+            headers: std::collections::BTreeMap::new(),
+            retry_policy: RetryPolicy::default(),
+            max_response_bytes: 64 * 1024 * 1024,
         }
     }
 
     /// Create config for OpenRouter embeddings.
     pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self::openai_compatible("https://openrouter.ai/api/v1", api_key, model)
+    }
+
+    pub fn openai(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::openai_compatible("https://api.openai.com/v1", api_key, model)
     }
 
     #[must_use]
@@ -45,21 +63,57 @@ impl EmbeddingsConfig {
         self.base_url = base_url.into();
         self
     }
+
+    #[must_use]
+    pub fn dimensions(mut self, dimensions: u32) -> Self {
+        self.dimensions = Some(dimensions);
+        self
+    }
+
+    #[must_use]
+    pub fn input_type(mut self, input_type: impl Into<String>) -> Self {
+        self.input_type = Some(input_type.into());
+        self
+    }
+
+    #[must_use]
+    pub fn encoding_format(mut self, encoding_format: impl Into<String>) -> Self {
+        self.encoding_format = Some(encoding_format.into());
+        self
+    }
+
+    #[must_use]
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name.into(), value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn without_auth(mut self) -> Self {
+        self.auth_scheme = AuthScheme::None;
+        self
+    }
 }
 
 /// Embeddings client (OpenAI-compatible API only).
 pub struct EmbeddingsClient {
-    http: reqwest::Client,
+    inner: LlmClient,
     config: EmbeddingsConfig,
 }
 
 impl EmbeddingsClient {
     pub fn new(config: EmbeddingsConfig) -> Result<Self, LlmError> {
-        let http = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|e| LlmError::Client(e.to_string()))?;
-        Ok(Self { http, config })
+        let mut client_config =
+            ClientConfig::openai_compatible(&config.base_url, &config.api_key, &config.model)
+                .timeout(config.timeout)
+                .auth_scheme(config.auth_scheme.clone())
+                .retry_policy(config.retry_policy.clone())
+                .max_response_bytes(config.max_response_bytes);
+        client_config.headers = config.headers.clone();
+        Ok(Self {
+            inner: LlmClient::new(client_config)?,
+            config,
+        })
     }
 
     /// Create embeddings for multiple texts (batch).
@@ -75,37 +129,20 @@ impl EmbeddingsClient {
         let request = EmbeddingsRequest {
             model: self.config.model.clone(),
             input,
+            dimensions: self.config.dimensions,
+            input_type: self.config.input_type.clone(),
+            encoding_format: self.config.encoding_format.clone(),
         };
 
-        let url = format!("{}/embeddings", self.config.base_url);
+        let url = self.inner.endpoint("embeddings");
         debug!(
             "POST {url} (model: {}, count: {expected_count})",
             self.config.model
         );
 
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!("Embeddings API error {status}: {body}");
-            return Err(LlmError::ApiError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
-        let resp: EmbeddingsResponse = response.json().await.map_err(|e| {
-            error!("Failed to parse embeddings response: {e}");
-            LlmError::ParseResponse(e.to_string())
-        })?;
+        let body = self.inner.send_json(&url, &request).await?;
+        let resp: EmbeddingsResponse = serde_json::from_slice(&body)
+            .map_err(|error| LlmError::ParseResponse(error.to_string()))?;
 
         if resp.data.len() != expected_count {
             return Err(LlmError::ParseResponse(format!(
@@ -117,6 +154,15 @@ impl EmbeddingsClient {
 
         // Sort by index to ensure correct order
         let mut data = resp.data;
+        let mut seen = std::collections::HashSet::new();
+        if data
+            .iter()
+            .any(|embedding| embedding.index >= expected_count || !seen.insert(embedding.index))
+        {
+            return Err(LlmError::ParseResponse(
+                "Embedding response contained an invalid or duplicate index".into(),
+            ));
+        }
         data.sort_by_key(|e| e.index);
 
         Ok(data.into_iter().map(|e| e.embedding).collect())

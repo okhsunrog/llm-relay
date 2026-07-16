@@ -21,7 +21,7 @@ impl Provider {
     pub fn default_base_url(&self) -> &'static str {
         match self {
             Self::Anthropic => "https://api.anthropic.com",
-            Self::OpenAiCompatible => "https://api.openai.com",
+            Self::OpenAiCompatible => "https://api.openai.com/v1",
         }
     }
 }
@@ -133,7 +133,7 @@ impl ToolDefinition {
 }
 
 /// Token usage information.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub input_tokens: u64,

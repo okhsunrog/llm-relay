@@ -1,48 +1,167 @@
 # llm-relay
 
-Shared Rust crate for LLM API types, format conversion, and HTTP client. Uses Anthropic as the canonical internal format and converts at the API boundary.
+Provider-neutral Rust types, protocol conversion, and HTTP transport for Anthropic and OpenAI-compatible LLM APIs. Anthropic-style content blocks are the canonical representation; provider-specific wire formats stay at the boundary.
+
+## Why use it with Rig?
+
+The crates solve different problems:
+
+- **llm-relay** owns portable provider configuration, custom API URLs, authentication, custom headers, retries, response limits, canonical message conversion, embeddings, and normalized SSE events.
+- **Rig** owns higher-level agent orchestration: tool loops, extractors, hooks, memory, and retrieval integrations.
+
+Enable the `rig` feature to construct native Rig clients from the same `ClientConfig`. This keeps application settings independent of a specific provider without reimplementing Rig's agent runtime.
 
 ## Features
 
-- **Anthropic & OpenAI types** — typed content blocks, tool use, extended thinking, embeddings
-- **Bidirectional conversion** — Anthropic <-> OpenAI format (messages, tools, responses)
-- **HTTP client** — chat completions (both providers) and embeddings
-- **Extended thinking** — adaptive thinking (Opus 4.6, Sonnet 4.6) and manual budget mode
-- **Proxy utilities** — cache control injection, MCP tool name transforms
+- Anthropic and OpenAI-compatible chat APIs with arbitrary HTTP(S) API bases
+- Bidirectional message, tool-call, thinking, response, and usage conversion
+- Normalized OpenAI/Anthropic SSE streaming, including tool argument deltas
+- OpenAI-compatible embeddings with dimensions, input type, and encoding format
+- Bearer, custom API-key-header, or no-auth operation
+- Custom headers, configurable timeouts, bounded responses, and retry policy
+- Optional Rig client adapters
+- Types-only mode for proxies and protocol gateways
 
 ## Cargo features
 
 | Feature | Default | Description |
-|---|---|---|
-| `client` | yes | HTTP client (reqwest + thiserror) |
-| `embeddings` | no | Embeddings client (implies `client`) |
+|---|---:|---|
+| `client` | yes | HTTP chat client |
+| `embeddings` | no | OpenAI-compatible embeddings |
+| `streaming` | no | Normalized SSE chat streams |
+| `rig` | no | Build Rig OpenAI/Anthropic clients from `ClientConfig` |
 
-Use `default-features = false` for types and conversion only (no HTTP dependencies).
+```toml
+llm-relay = { version = "0.3", features = ["embeddings", "streaming", "rig"] }
+```
 
-## Usage
+Use `default-features = false` for types and conversion without an HTTP runtime.
 
-```rust
-use llm_relay::{LlmClient, ClientConfig, ChatOptions};
-use llm_relay::types::anthropic::Message;
+## API base URL contract
 
+For OpenAI-compatible servers, `base_url` is the complete API base before the endpoint name. It commonly ends in `/v1`:
+
+```text
+http://localhost:11434/v1 + chat/completions
+https://openrouter.ai/api/v1 + embeddings
+```
+
+For Anthropic-compatible servers, both the server root and a pasted `/v1` or `/v1/messages` URL are accepted and normalized.
+
+## Chat
+
+```rust,no_run
+use llm_relay::{ChatOptions, ClientConfig, LlmClient, Message};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let config = ClientConfig::openai_compatible(
+    "https://llm.example.com/v1",
+    "secret",
+    "my-model",
+)
+.header("X-Tenant", "notes-rs");
+
+let client = LlmClient::new(config)?;
+let response = client
+    .complete("Explain hybrid search", ChatOptions::default())
+    .await?;
+println!("{}", response.text());
+# Ok(())
+# }
+```
+
+Anthropic-compatible custom server:
+
+```rust,no_run
+# use llm_relay::{ClientConfig, LlmClient};
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
 let client = LlmClient::new(
-    ClientConfig::anthropic("sk-...", "claude-sonnet-4-5-20250514")
+    ClientConfig::anthropic("secret", "claude-compatible-model")
+        .base_url("https://anthropic-proxy.example.com"),
 )?;
-
-// Simple text completion
-let response = client.complete(Some("You are helpful."), "Hello!", None).await?;
-
-// Full chat with tools and thinking
-let messages = vec![Message::user_text("What's the weather?")];
-let options = ChatOptions { system: Some("..."), tools: Some(&tools), thinking: Some(&thinking) };
-let response = client.chat(&messages, options).await?;
+# Ok(())
+# }
 ```
 
-Types-only (for proxy/conversion scenarios):
+Local server without authentication:
 
-```rust
-// Cargo.toml: llm-relay = { path = "...", default-features = false }
-use llm_relay::convert::to_anthropic::inbound_request_to_anthropic;
-use llm_relay::convert::to_openai::anthropic_response_to_openai;
-use llm_relay::types::openai::InboundChatRequest;
+```rust,no_run
+# use llm_relay::{ClientConfig, LlmClient};
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
+let client = LlmClient::new(ClientConfig::local_openai_compatible(
+    "http://localhost:11434/v1",
+    "qwen3",
+))?;
+# Ok(())
+# }
 ```
+
+## Streaming
+
+```rust,no_run
+use futures_util::StreamExt;
+use llm_relay::{ChatOptions, ClientConfig, LlmClient, Message, StreamEvent};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let client = LlmClient::new(ClientConfig::openrouter("secret", "openai/gpt-5.4-mini"))?;
+let mut stream = client
+    .chat_stream(&[Message::user_text("Hello")], ChatOptions::default())
+    .await?;
+
+while let Some(event) = stream.next().await {
+    match event? {
+        StreamEvent::TextDelta { text } => print!("{text}"),
+        StreamEvent::Usage { usage } => eprintln!("{} tokens", usage.total_tokens()),
+        _ => {}
+    }
+}
+# Ok(())
+# }
+```
+
+## Embeddings
+
+```rust,no_run
+use llm_relay::{EmbeddingsClient, EmbeddingsConfig};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let client = EmbeddingsClient::new(
+    EmbeddingsConfig::openai_compatible(
+        "https://embeddings.example.com/v1",
+        "secret",
+        "embedding-model",
+    )
+    .dimensions(1024)
+    .input_type("document"),
+)?;
+let vectors = client.create_embeddings(&["first", "second"]).await?;
+# Ok(())
+# }
+```
+
+## Rig adapter
+
+```rust,no_run
+use llm_relay::{ClientConfig, RigClient};
+use rig::client::CompletionClient;
+
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
+let config = ClientConfig::openai_compatible(
+    "http://localhost:8000/v1",
+    "",
+    "local-model",
+);
+
+match config.rig_client()? {
+    RigClient::OpenAi(client) => {
+        let _agent = client.agent(&config.model).build();
+    }
+    RigClient::Anthropic(client) => {
+        let _agent = client.agent(&config.model).build();
+    }
+}
+# Ok(())
+# }
+```
+
+Not every “compatible” server implements streaming, tool calling, structured output, or usage reporting. Applications should probe the capabilities they actually need instead of assuming complete compatibility.

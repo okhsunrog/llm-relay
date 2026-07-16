@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum LlmError {
+    #[error("Invalid client configuration: {0}")]
+    Config(String),
     #[error("HTTP client error: {0}")]
     Client(String),
 
@@ -19,4 +21,10 @@ pub enum LlmError {
 
     #[error("Conversion error: {0}")]
     Conversion(String),
+
+    #[error("Response exceeded {limit} bytes (received {actual})")]
+    ResponseTooLarge { limit: usize, actual: usize },
+
+    #[error("Streaming protocol error: {0}")]
+    Stream(String),
 }

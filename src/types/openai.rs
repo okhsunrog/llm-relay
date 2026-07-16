@@ -183,6 +183,12 @@ pub struct ResponseUsage {
 pub struct EmbeddingsRequest {
     pub model: String,
     pub input: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding_format: Option<String>,
 }
 
 /// OpenAI-compatible embeddings response.

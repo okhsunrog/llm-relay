@@ -11,7 +11,13 @@ pub use types::common::{
 };
 
 #[cfg(feature = "client")]
-pub use client::{ChatOptions, ClientConfig, LlmClient, LlmError};
+pub use client::{AuthScheme, ChatOptions, ClientConfig, LlmClient, LlmError, RetryPolicy};
+
+#[cfg(feature = "streaming")]
+pub use client::{ChatStream, StreamEvent};
+
+#[cfg(feature = "rig")]
+pub use client::rig::RigClient;
 
 #[cfg(feature = "embeddings")]
 pub use client::{EmbeddingsClient, EmbeddingsConfig};
