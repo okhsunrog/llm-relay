@@ -235,19 +235,27 @@ impl LlmClient {
         let body = serde_json::to_vec(body).map_err(|error| LlmError::Client(error.to_string()))?;
         let mut attempt = 0;
         loop {
-            let response = self.request(url)?.body(body.clone()).send().await?;
+            let response = match self.request(url)?.body(body.clone()).send().await {
+                Ok(response) => response,
+                Err(error) if attempt < self.config.retry_policy.max_retries => {
+                    let delay = self.retry_delay(attempt);
+                    attempt += 1;
+                    tracing::warn!(
+                        %error,
+                        attempt,
+                        ?delay,
+                        "retrying LLM request after transport failure"
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                Err(error) => return Err(LlmError::Request(error)),
+            };
             let status = response.status();
             let retryable =
                 status.as_u16() == 408 || status.as_u16() == 429 || status.is_server_error();
             if retryable && attempt < self.config.retry_policy.max_retries {
-                let shift = attempt.min(16);
-                let factor = 1u32 << shift;
-                let delay = self
-                    .config
-                    .retry_policy
-                    .initial_backoff
-                    .saturating_mul(factor)
-                    .min(self.config.retry_policy.max_backoff);
+                let delay = self.retry_delay(attempt);
                 attempt += 1;
                 tracing::warn!(%status, attempt, ?delay, "retrying LLM request");
                 tokio::time::sleep(delay).await;
@@ -268,6 +276,16 @@ impl LlmClient {
             }
             return Ok(bytes.to_vec());
         }
+    }
+
+    fn retry_delay(&self, attempt: u32) -> Duration {
+        let shift = attempt.min(16);
+        let factor = 1u32 << shift;
+        self.config
+            .retry_policy
+            .initial_backoff
+            .saturating_mul(factor)
+            .min(self.config.retry_policy.max_backoff)
     }
 }
 
