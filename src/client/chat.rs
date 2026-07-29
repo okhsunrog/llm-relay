@@ -1,12 +1,15 @@
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use tracing::{debug, info};
 
 use super::LlmClient;
 use super::error::LlmError;
 use crate::convert::{thinking::build_thinking_params, to_openai};
-use crate::types::anthropic::{Message, MessagesRequest, MessagesResponse};
-use crate::types::common::{Provider, ResponseFormat, ThinkingConfig, ToolDefinition};
+use crate::types::anthropic::{
+    Message, MessagesRequest, MessagesResponse, OutputConfig, OutputFormat,
+};
+use crate::types::common::{Provider, ResponseFormat, StopReason, ThinkingConfig, ToolDefinition};
 use crate::types::openai::{self, ChatRequest};
 
 /// Options for a chat request.
@@ -67,7 +70,7 @@ impl LlmClient {
     /// Complete a request with a strict JSON Schema response and deserialize it.
     ///
     /// OpenAI-compatible providers use `response_format.json_schema`. Native
-    /// Anthropic providers use a required tool carrying the same schema.
+    /// Anthropic providers use `output_config.format` with constrained decoding.
     pub async fn complete_structured<T>(
         &self,
         user: &str,
@@ -106,56 +109,41 @@ impl LlmClient {
                 .await?
             }
             Provider::Anthropic => {
-                let tools = [ToolDefinition::new(
-                    schema_name,
-                    "Submit the structured result using exactly this schema.",
-                    schema,
-                )];
+                let schema = prepare_anthropic_schema(schema);
+                let response_format = ResponseFormat::json_schema(schema_name, schema, true);
                 self.complete(
                     user,
                     ChatOptions {
                         system,
                         temperature: Some(0.0),
-                        tools: Some(&tools),
-                        required_tool: Some(schema_name),
+                        response_format: Some(&response_format),
                         ..ChatOptions::default()
                     },
                 )
                 .await?
             }
         };
-        let data = match self.config.provider {
-            Provider::OpenAiCompatible => {
-                let text = response.text();
-                if text.trim().is_empty() {
-                    return Err(LlmError::EmptyResponse);
-                }
-                serde_json::from_str(&text).map_err(|error| LlmError::InvalidStructuredOutput {
-                    error: error.to_string(),
-                    body: text.chars().take(4_096).collect(),
-                })?
-            }
-            Provider::Anthropic => {
-                let input = response.content.iter().find_map(|block| match block {
-                    crate::types::anthropic::ContentBlock::ToolUse { name, input, .. }
-                        if name == schema_name =>
-                    {
-                        Some(input.clone())
-                    }
-                    _ => None,
-                });
-                let input = input.ok_or_else(|| LlmError::InvalidStructuredOutput {
-                    error: format!("provider did not call required tool {schema_name}"),
-                    body: response.text().chars().take(4_096).collect(),
-                })?;
-                serde_json::from_value(input.clone()).map_err(|error| {
-                    LlmError::InvalidStructuredOutput {
-                        error: error.to_string(),
-                        body: input.to_string().chars().take(4_096).collect(),
-                    }
-                })?
-            }
-        };
+        if matches!(response.stop_reason, StopReason::MaxTokens) {
+            return Err(LlmError::InvalidStructuredOutput {
+                error: "provider stopped at max_tokens".into(),
+                body: response.text().chars().take(4_096).collect(),
+            });
+        }
+        if matches!(&response.stop_reason, StopReason::Other(reason) if reason == "refusal") {
+            return Err(LlmError::InvalidStructuredOutput {
+                error: "provider refused the structured request".into(),
+                body: response.text().chars().take(4_096).collect(),
+            });
+        }
+        let text = response.text();
+        if text.trim().is_empty() {
+            return Err(LlmError::EmptyResponse);
+        }
+        let data =
+            serde_json::from_str(&text).map_err(|error| LlmError::InvalidStructuredOutput {
+                error: error.to_string(),
+                body: text.chars().take(4_096).collect(),
+            })?;
         Ok(StructuredResponse {
             data,
             usage: response.usage.unwrap_or_default(),
@@ -186,13 +174,19 @@ impl LlmClient {
         messages: &[Message],
         options: &ChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
-        if options.response_format.is_some() {
-            return Err(LlmError::Config(
-                "response_format is not supported by the native Anthropic Messages transport"
-                    .into(),
-            ));
+        let (thinking, mut output_config) = build_thinking_params(options.thinking);
+        if let Some(response_format) = options.response_format {
+            let ResponseFormat::JsonSchema { json_schema } = response_format else {
+                return Err(LlmError::Config(
+                    "native Anthropic structured output requires a JSON Schema".into(),
+                ));
+            };
+            output_config
+                .get_or_insert_with(OutputConfig::default)
+                .format = Some(OutputFormat::JsonSchema {
+                schema: json_schema.schema.clone(),
+            });
         }
-        let (thinking, output_config) = build_thinking_params(options.thinking);
 
         let request_body = MessagesRequest {
             model: self.config.model.clone(),
@@ -258,5 +252,123 @@ impl LlmClient {
             resp.content.len()
         );
         Ok(resp)
+    }
+}
+
+fn prepare_anthropic_schema(mut schema: Value) -> Value {
+    normalize_anthropic_schema(&mut schema);
+    schema
+}
+
+fn normalize_anthropic_schema(schema: &mut Value) {
+    match schema {
+        Value::Array(items) => {
+            for item in items {
+                normalize_anthropic_schema(item);
+            }
+        }
+        Value::Object(object) => {
+            object.remove("$schema");
+            object.remove("default");
+            object.remove("examples");
+            object.remove("minimum");
+            object.remove("maximum");
+            object.remove("exclusiveMinimum");
+            object.remove("exclusiveMaximum");
+            object.remove("multipleOf");
+            object.remove("minLength");
+            object.remove("maxLength");
+            object.remove("minItems");
+            object.remove("maxItems");
+            object.remove("minProperties");
+            object.remove("maxProperties");
+            object.remove("format");
+
+            let property_names = object
+                .get("properties")
+                .and_then(Value::as_object)
+                .map(|properties| properties.keys().cloned().collect::<Vec<_>>());
+            if let Some(property_names) = property_names {
+                object.insert("additionalProperties".into(), Value::Bool(false));
+                object.insert(
+                    "required".into(),
+                    Value::Array(property_names.into_iter().map(Value::String).collect()),
+                );
+            }
+            for value in object.values_mut() {
+                normalize_anthropic_schema(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::prepare_anthropic_schema;
+
+    #[test]
+    fn anthropic_schema_is_strict_and_uses_only_supported_constraints() {
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "default": 50
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "properties": {
+                        "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    }
+                }
+            }
+        });
+
+        let prepared = prepare_anthropic_schema(schema);
+
+        assert_eq!(prepared["required"], json!(["metadata", "score", "tags"]));
+        assert_eq!(prepared["additionalProperties"], false);
+        assert_eq!(
+            prepared["properties"]["metadata"]["required"],
+            json!(["created_at"])
+        );
+        assert_eq!(
+            prepared["properties"]["metadata"]["additionalProperties"],
+            false
+        );
+        assert!(prepared.get("$schema").is_none());
+        assert!(
+            prepared["properties"]["score"]
+                .as_object()
+                .is_some_and(|score| !score.contains_key("minimum")
+                    && !score.contains_key("maximum")
+                    && !score.contains_key("default"))
+        );
+        assert!(
+            prepared["properties"]["tags"]["items"]
+                .as_object()
+                .is_some_and(|items| !items.contains_key("minLength"))
+        );
+        assert!(
+            prepared["properties"]["metadata"]["properties"]["created_at"]
+                .as_object()
+                .is_some_and(|created_at| !created_at.contains_key("format"))
+        );
     }
 }

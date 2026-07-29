@@ -16,7 +16,8 @@ pub fn build_thinking_params(
                 None
             } else {
                 Some(OutputConfig {
-                    effort: effort.as_str().to_string(),
+                    effort: Some(effort.as_str().to_string()),
+                    format: None,
                 })
             };
             (Some(ThinkingParam::Adaptive), output_config)

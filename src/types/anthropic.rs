@@ -116,10 +116,20 @@ pub enum ThinkingParam {
     Enabled { budget_tokens: u32 },
 }
 
-/// Output configuration — controls effort level for adaptive thinking.
+/// Anthropic JSON output format.
 #[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputFormat {
+    JsonSchema { schema: serde_json::Value },
+}
+
+/// Output configuration for adaptive-thinking effort and structured JSON.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OutputConfig {
-    pub effort: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<OutputFormat>,
 }
 
 /// Anthropic Messages API request.
@@ -194,5 +204,45 @@ impl MessagesResponse {
             .iter()
             .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{OutputConfig, OutputFormat};
+
+    #[test]
+    fn output_config_serializes_effort_and_json_schema_together() {
+        let config = OutputConfig {
+            effort: Some("medium".to_owned()),
+            format: Some(OutputFormat::JsonSchema {
+                schema: json!({
+                    "type": "object",
+                    "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["tags"],
+                    "additionalProperties": false
+                }),
+            }),
+        };
+
+        assert_eq!(
+            serde_json::to_value(config).expect("serialize output config"),
+            json!({
+                "effort": "medium",
+                "format": {
+                    "type": "json_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["tags"],
+                        "additionalProperties": false
+                    }
+                }
+            })
+        );
     }
 }

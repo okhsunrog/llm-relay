@@ -122,8 +122,8 @@ println!("{:?}", response.data.values);
 ```
 
 OpenAI-compatible transports use strict `response_format.json_schema`. Native
-Anthropic Messages transports require a tool with the generated schema and
-deserialize its input through the same typed API.
+Anthropic Messages transports use `output_config.format` with the generated
+schema and deserialize the constrained JSON response through the same typed API.
 
 ## Streaming
 
