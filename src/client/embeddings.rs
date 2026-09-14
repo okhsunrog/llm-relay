@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use tracing::debug;
 
-use super::{AuthScheme, ClientConfig, LlmClient, RetryPolicy, error::LlmError};
-use crate::types::openai::{EmbeddingsRequest, EmbeddingsResponse};
+use super::{AuthScheme, ClientConfig, RetryPolicy, WireClient, error::LlmError};
+use crate::wire::openai::{EmbeddingsRequest, EmbeddingsResponse};
 
 /// Configuration for the embeddings client.
 #[derive(Debug, Clone)]
@@ -97,7 +97,7 @@ impl EmbeddingsConfig {
 
 /// Embeddings client (OpenAI-compatible API only).
 pub struct EmbeddingsClient {
-    inner: LlmClient,
+    inner: WireClient,
     config: EmbeddingsConfig,
 }
 
@@ -111,7 +111,7 @@ impl EmbeddingsClient {
                 .max_response_bytes(config.max_response_bytes);
         client_config.headers = config.headers.clone();
         Ok(Self {
-            inner: LlmClient::new(client_config)?,
+            inner: WireClient::new(client_config)?,
             config,
         })
     }

@@ -3,18 +3,18 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::{debug, info};
 
-use super::LlmClient;
+use super::WireClient;
 use super::error::LlmError;
 use crate::convert::{thinking::build_thinking_params, to_openai};
-use crate::types::anthropic::{
+use crate::wire::anthropic::{
     Message, MessagesRequest, MessagesResponse, OutputConfig, OutputFormat,
 };
-use crate::types::common::{Provider, ResponseFormat, StopReason, ThinkingConfig, ToolDefinition};
-use crate::types::openai::{self, ChatRequest};
+use crate::wire::common::{Provider, ResponseFormat, StopReason, ThinkingConfig, ToolDefinition};
+use crate::wire::openai::{self, ChatRequest};
 
 /// Options for a chat request.
 #[derive(Default)]
-pub struct ChatOptions<'a> {
+pub struct WireChatOptions<'a> {
     pub system: Option<&'a str>,
     pub tools: Option<&'a [ToolDefinition]>,
     pub thinking: Option<&'a ThinkingConfig>,
@@ -28,10 +28,10 @@ pub struct ChatOptions<'a> {
 #[derive(Debug, Clone)]
 pub struct StructuredResponse<T> {
     pub data: T,
-    pub usage: crate::types::common::Usage,
+    pub usage: crate::wire::common::Usage,
 }
 
-impl LlmClient {
+impl WireClient {
     /// Send a chat completion request using Anthropic message format.
     ///
     /// Automatically converts to OpenAI format if the provider is OpenAI-compatible.
@@ -39,7 +39,7 @@ impl LlmClient {
     pub async fn chat(
         &self,
         messages: &[Message],
-        options: ChatOptions<'_>,
+        options: WireChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
         info!(
             "Sending request to LLM (provider: {}, model: {}, messages: {})",
@@ -61,7 +61,7 @@ impl LlmClient {
     pub async fn complete(
         &self,
         user: &str,
-        options: ChatOptions<'_>,
+        options: WireChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
         let messages = vec![Message::user_text(user)];
         self.chat(&messages, options).await
@@ -99,11 +99,11 @@ impl LlmClient {
                 let response_format = ResponseFormat::json_schema(schema_name, schema, true);
                 self.complete(
                     user,
-                    ChatOptions {
+                    WireChatOptions {
                         system,
                         temperature: Some(0.0),
                         response_format: Some(&response_format),
-                        ..ChatOptions::default()
+                        ..WireChatOptions::default()
                     },
                 )
                 .await?
@@ -113,11 +113,11 @@ impl LlmClient {
                 let response_format = ResponseFormat::json_schema(schema_name, schema, true);
                 self.complete(
                     user,
-                    ChatOptions {
+                    WireChatOptions {
                         system,
                         temperature: Some(0.0),
                         response_format: Some(&response_format),
-                        ..ChatOptions::default()
+                        ..WireChatOptions::default()
                     },
                 )
                 .await?
@@ -172,7 +172,7 @@ impl LlmClient {
     async fn chat_anthropic(
         &self,
         messages: &[Message],
-        options: &ChatOptions<'_>,
+        options: &WireChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
         let (thinking, mut output_config) = build_thinking_params(options.thinking);
         if let Some(response_format) = options.response_format {
@@ -219,7 +219,7 @@ impl LlmClient {
     async fn chat_openai_compat(
         &self,
         messages: &[Message],
-        options: &ChatOptions<'_>,
+        options: &WireChatOptions<'_>,
     ) -> Result<MessagesResponse, LlmError> {
         let openai_messages = to_openai::messages_to_openai(options.system, messages);
 

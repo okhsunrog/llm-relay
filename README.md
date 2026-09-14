@@ -1,6 +1,6 @@
 # llm-relay
 
-Provider-neutral Rust types, protocol conversion, and HTTP transport for Anthropic and OpenAI-compatible LLM APIs. Anthropic-style content blocks are the canonical representation; provider-specific wire formats stay at the boundary.
+Provider-neutral Rust types, protocol conversion, and HTTP transport for Anthropic and OpenAI-compatible LLM APIs. The `protocol` module represents messages, tool calls/results, multimodal content and opaque reasoning independently of provider wire types. HTTP clients remain explicitly wire-oriented.
 
 ## Why use it with Rig?
 
@@ -32,10 +32,45 @@ Enable the `rig` feature to construct native Rig clients from the same `ClientCo
 | `rig` | no | Build Rig OpenAI/Anthropic clients from `ClientConfig` |
 
 ```toml
-llm-relay = { version = "0.3", features = ["embeddings", "streaming", "rig"] }
+llm-relay = { version = "1", features = ["embeddings", "streaming", "rig"] }
 ```
 
 Use `default-features = false` for types and conversion without an HTTP runtime.
+
+## Protocol conversion and 1.0 migration
+
+`protocol::translate_request(source, target, &json)` supports Messages, Chat
+Completions and Responses. Use `decode_request` / `encode_request` to edit the
+neutral `Request` between codecs. Identity translations preserve native JSON;
+cross-protocol translations reject unrepresentable items and return diagnostics
+for approximations. Call `.enforce(Policy::Strict)` to reject those approximations,
+or choose `Policy::Compatible` explicitly. Backend-specific restrictions belong
+to the application.
+
+`protocol::Decoder` consumes parsed Responses events. `Encoder` renders native
+Responses, Chat Completions or Messages SSE frames; `Event::Finish` carries a
+completion that can render ordinary JSON. The caller owns SSE framing input,
+HTTP, cancellation, timeouts and accounting. Call `Decoder::finish()` at EOF to
+detect truncation. Completed Messages/Chat responses can also be translated in
+both directions; their transport stream decoders remain in the optional wire
+client. There is no Messages/Chat streaming decoder in `protocol` yet.
+
+Opaque reasoning remains tagged by its originating protocol. Responses reasoning
+can round-trip through Messages thinking signatures using a versioned envelope;
+foreign signed reasoning is rejected when crossing backends. This is a relay
+extension, not a signature accepted by another provider.
+
+Breaking changes from 0.3:
+
+- Removed root `Message`, `ContentBlock`, and `MessagesResponse` exports. Use
+  neutral `protocol::{Request, Item, Content}` for gateways, or explicitly import
+  `wire::anthropic` types for the wire HTTP client.
+- Renamed `types` to `wire`, `LlmClient` to `WireClient`, `ChatOptions` to
+  `WireChatOptions`, and streaming types to `WireChatStream` / `WireStreamEvent`.
+- Removed public `convert` and old `Inbound*` request types. Use `protocol`
+  codecs; provider preparation helpers live under `anthropic`.
+- There are no deprecated aliases. Embeddings and Rig configuration remain
+  available through their existing feature flags.
 
 ## API base URL contract
 
@@ -51,7 +86,7 @@ For Anthropic-compatible servers, both the server root and a pasted `/v1` or `/v
 ## Chat
 
 ```rust,no_run
-use llm_relay::{ChatOptions, ClientConfig, LlmClient, Message};
+use llm_relay::{WireChatOptions, ClientConfig, WireClient};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let config = ClientConfig::openai_compatible(
@@ -61,9 +96,9 @@ let config = ClientConfig::openai_compatible(
 )
 .header("X-Tenant", "notes-rs");
 
-let client = LlmClient::new(config)?;
+let client = WireClient::new(config)?;
 let response = client
-    .complete("Explain hybrid search", ChatOptions::default())
+    .complete("Explain hybrid search", WireChatOptions::default())
     .await?;
 println!("{}", response.text());
 # Ok(())
@@ -73,9 +108,9 @@ println!("{}", response.text());
 Anthropic-compatible custom server:
 
 ```rust,no_run
-# use llm_relay::{ClientConfig, LlmClient};
+# use llm_relay::{ClientConfig, WireClient};
 # fn example() -> Result<(), Box<dyn std::error::Error>> {
-let client = LlmClient::new(
+let client = WireClient::new(
     ClientConfig::anthropic("secret", "claude-compatible-model")
         .base_url("https://anthropic-proxy.example.com"),
 )?;
@@ -86,9 +121,9 @@ let client = LlmClient::new(
 Local server without authentication:
 
 ```rust,no_run
-# use llm_relay::{ClientConfig, LlmClient};
+# use llm_relay::{ClientConfig, WireClient};
 # fn example() -> Result<(), Box<dyn std::error::Error>> {
-let client = LlmClient::new(ClientConfig::local_openai_compatible(
+let client = WireClient::new(ClientConfig::local_openai_compatible(
     "http://localhost:11434/v1",
     "qwen3",
 ))?;
@@ -102,7 +137,7 @@ OpenAI-compatible providers that implement `response_format.json_schema` can
 return a value validated against a schema generated from the Rust type:
 
 ```rust,no_run
-use llm_relay::{ClientConfig, LlmClient};
+use llm_relay::{ClientConfig, WireClient};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -112,7 +147,7 @@ struct Keywords {
 }
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-let client = LlmClient::new(ClientConfig::openrouter("secret", "google/gemini-3.1-flash-lite"))?;
+let client = WireClient::new(ClientConfig::openrouter("secret", "google/gemini-3.1-flash-lite"))?;
 let response = client
     .complete_structured::<Keywords>("Extract keywords from: Rust and SQLite", "keywords", None)
     .await?;
@@ -129,18 +164,19 @@ schema and deserialize the constrained JSON response through the same typed API.
 
 ```rust,no_run
 use futures_util::StreamExt;
-use llm_relay::{ChatOptions, ClientConfig, LlmClient, Message, StreamEvent};
+use llm_relay::{WireChatOptions, ClientConfig, WireClient, WireStreamEvent};
+use llm_relay::wire::anthropic::Message;
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-let client = LlmClient::new(ClientConfig::openrouter("secret", "openai/gpt-5.4-mini"))?;
+let client = WireClient::new(ClientConfig::openrouter("secret", "openai/gpt-5.4-mini"))?;
 let mut stream = client
-    .chat_stream(&[Message::user_text("Hello")], ChatOptions::default())
+    .chat_stream(&[Message::user_text("Hello")], WireChatOptions::default())
     .await?;
 
 while let Some(event) = stream.next().await {
     match event? {
-        StreamEvent::TextDelta { text } => print!("{text}"),
-        StreamEvent::Usage { usage } => eprintln!("{} tokens", usage.total_tokens()),
+        WireStreamEvent::TextDelta { text } => print!("{text}"),
+        WireStreamEvent::Usage { usage } => eprintln!("{} tokens", usage.total_tokens()),
         _ => {}
     }
 }

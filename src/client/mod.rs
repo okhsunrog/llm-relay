@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::types::common::Provider;
+use crate::wire::common::Provider;
 
 pub mod chat;
 #[cfg(feature = "embeddings")]
@@ -12,12 +12,12 @@ pub mod rig;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 
-pub use chat::{ChatOptions, StructuredResponse};
+pub use chat::{StructuredResponse, WireChatOptions};
 #[cfg(feature = "embeddings")]
 pub use embeddings::{EmbeddingsClient, EmbeddingsConfig};
 pub use error::LlmError;
 #[cfg(feature = "streaming")]
-pub use streaming::{ChatStream, StreamEvent};
+pub use streaming::{WireChatStream, WireStreamEvent};
 
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -164,12 +164,12 @@ impl ClientConfig {
 
 /// The main LLM client.
 #[derive(Clone)]
-pub struct LlmClient {
+pub struct WireClient {
     pub(crate) http: reqwest::Client,
     pub(crate) config: ClientConfig,
 }
 
-impl LlmClient {
+impl WireClient {
     pub fn new(config: ClientConfig) -> Result<Self, LlmError> {
         validate_base_url(&config.base_url)?;
         let http = reqwest::Client::builder()
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn rejects_unsafe_or_ambiguous_base_urls() {
         assert!(
-            LlmClient::new(ClientConfig::openai_compatible(
+            WireClient::new(ClientConfig::openai_compatible(
                 "file:///tmp/socket",
                 "",
                 "model"
@@ -356,7 +356,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            LlmClient::new(ClientConfig::openai_compatible(
+            WireClient::new(ClientConfig::openai_compatible(
                 "https://proxy.example/v1?key=secret",
                 "",
                 "model"

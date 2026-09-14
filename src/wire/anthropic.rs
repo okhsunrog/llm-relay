@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{StopReason, ToolDefinition, Usage};
 
-/// Anthropic content block — the canonical internal representation.
+/// Anthropic wire content block. The neutral model is protocol::Item.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
@@ -151,7 +151,7 @@ pub struct MessagesRequest {
 }
 
 /// Anthropic Messages API response.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MessagesResponse {
     #[serde(default)]
     pub id: Option<String>,

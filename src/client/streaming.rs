@@ -5,17 +5,17 @@ use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 
-use super::{ChatOptions, LlmClient, error::LlmError};
+use super::{WireChatOptions, WireClient, error::LlmError};
 use crate::convert::{thinking::build_thinking_params, to_openai};
-use crate::types::anthropic::{Message, MessagesRequest};
-use crate::types::common::{Provider, Usage};
-use crate::types::openai::ChatRequest;
+use crate::wire::anthropic::{Message, MessagesRequest};
+use crate::wire::common::{Provider, Usage};
+use crate::wire::openai::ChatRequest;
 
-pub type ChatStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>;
+pub type WireChatStream = Pin<Box<dyn Stream<Item = Result<WireStreamEvent, LlmError>> + Send>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamEvent {
+pub enum WireStreamEvent {
     TextDelta {
         text: String,
     },
@@ -39,7 +39,7 @@ pub enum StreamEvent {
     },
 }
 
-impl LlmClient {
+impl WireClient {
     /// Stream a chat completion and normalize provider SSE events.
     ///
     /// The returned stream intentionally exposes tool argument deltas instead
@@ -48,8 +48,8 @@ impl LlmClient {
     pub async fn chat_stream(
         &self,
         messages: &[Message],
-        options: ChatOptions<'_>,
-    ) -> Result<ChatStream, LlmError> {
+        options: WireChatOptions<'_>,
+    ) -> Result<WireChatStream, LlmError> {
         let (url, body) = match self.config.provider {
             Provider::OpenAiCompatible => {
                 let request = ChatRequest {
@@ -116,9 +116,9 @@ impl LlmClient {
     }
 }
 
-fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
+fn parse_openai_event(data: &str) -> Vec<Result<WireStreamEvent, LlmError>> {
     if data.trim() == "[DONE]" {
-        return vec![Ok(StreamEvent::Done { stop_reason: None })];
+        return vec![Ok(WireStreamEvent::Done { stop_reason: None })];
     }
     let value: serde_json::Value = match serde_json::from_str(data) {
         Ok(value) => value,
@@ -134,7 +134,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
             .get("completion_tokens")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or_default();
-        events.push(Ok(StreamEvent::Usage {
+        events.push(Ok(WireStreamEvent::Usage {
             usage: Usage {
                 input_tokens,
                 output_tokens,
@@ -162,7 +162,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
         if let Some(text) = delta.get("content").and_then(serde_json::Value::as_str)
             && !text.is_empty()
         {
-            events.push(Ok(StreamEvent::TextDelta { text: text.into() }));
+            events.push(Ok(WireStreamEvent::TextDelta { text: text.into() }));
         }
         if let Some(text) = delta
             .get("reasoning_content")
@@ -170,7 +170,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
             .and_then(serde_json::Value::as_str)
             && !text.is_empty()
         {
-            events.push(Ok(StreamEvent::ThinkingDelta { text: text.into() }));
+            events.push(Ok(WireStreamEvent::ThinkingDelta { text: text.into() }));
         }
         for call in delta
             .get("tool_calls")
@@ -182,7 +182,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
                 .get("index")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or_default() as usize;
-            events.push(Ok(StreamEvent::ToolCallDelta {
+            events.push(Ok(WireStreamEvent::ToolCallDelta {
                 index,
                 id: call
                     .get("id")
@@ -203,7 +203,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
             .get("finish_reason")
             .and_then(serde_json::Value::as_str)
         {
-            events.push(Ok(StreamEvent::Done {
+            events.push(Ok(WireStreamEvent::Done {
                 stop_reason: Some(reason.into()),
             }));
         }
@@ -211,7 +211,7 @@ fn parse_openai_event(data: &str) -> Vec<Result<StreamEvent, LlmError>> {
     events
 }
 
-fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, LlmError>> {
+fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<WireStreamEvent, LlmError>> {
     let value: serde_json::Value = match serde_json::from_str(data) {
         Ok(value) => value,
         Err(error) => return vec![Err(LlmError::Stream(error.to_string()))],
@@ -224,12 +224,12 @@ fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, Llm
             Some("text_delta") => value
                 .pointer("/delta/text")
                 .and_then(serde_json::Value::as_str)
-                .map(|text| StreamEvent::TextDelta { text: text.into() }),
+                .map(|text| WireStreamEvent::TextDelta { text: text.into() }),
             Some("thinking_delta") => value
                 .pointer("/delta/thinking")
                 .and_then(serde_json::Value::as_str)
-                .map(|text| StreamEvent::ThinkingDelta { text: text.into() }),
-            Some("input_json_delta") => Some(StreamEvent::ToolCallDelta {
+                .map(|text| WireStreamEvent::ThinkingDelta { text: text.into() }),
+            Some("input_json_delta") => Some(WireStreamEvent::ToolCallDelta {
                 index: value
                     .get("index")
                     .and_then(serde_json::Value::as_u64)
@@ -250,7 +250,7 @@ fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, Llm
                 .and_then(serde_json::Value::as_str)
                 == Some("tool_use") =>
         {
-            Some(StreamEvent::ToolCallDelta {
+            Some(WireStreamEvent::ToolCallDelta {
                 index: value
                     .get("index")
                     .and_then(serde_json::Value::as_u64)
@@ -266,7 +266,7 @@ fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, Llm
                 arguments: String::new(),
             })
         }
-        "content_block_stop" => Some(StreamEvent::ToolCallComplete {
+        "content_block_stop" => Some(WireStreamEvent::ToolCallComplete {
             index: value
                 .get("index")
                 .and_then(serde_json::Value::as_u64)
@@ -274,7 +274,7 @@ fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, Llm
         }),
         "message_start" => value
             .pointer("/message/usage")
-            .map(|usage| StreamEvent::Usage {
+            .map(|usage| WireStreamEvent::Usage {
                 usage: anthropic_usage(usage),
             }),
         "message_delta" => {
@@ -285,17 +285,17 @@ fn parse_anthropic_event(event: &str, data: &str) -> Vec<Result<StreamEvent, Llm
                 .map(str::to_string);
             if let Some(usage) = usage {
                 return vec![
-                    Ok(StreamEvent::Usage { usage }),
-                    Ok(StreamEvent::Done {
+                    Ok(WireStreamEvent::Usage { usage }),
+                    Ok(WireStreamEvent::Done {
                         stop_reason: reason,
                     }),
                 ];
             }
-            Some(StreamEvent::Done {
+            Some(WireStreamEvent::Done {
                 stop_reason: reason,
             })
         }
-        "message_stop" => Some(StreamEvent::Done { stop_reason: None }),
+        "message_stop" => Some(WireStreamEvent::Done { stop_reason: None }),
         "error" => {
             return vec![Err(LlmError::Stream(
                 value
@@ -340,9 +340,12 @@ mod tests {
         let events = parse_openai_event(
             r#"{"choices":[{"delta":{"content":"hi","tool_calls":[{"index":0,"id":"call_1","function":{"name":"search","arguments":"{}"}}]},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}"#,
         );
-        assert!(matches!(events[0], Ok(StreamEvent::Usage { .. })));
-        assert!(matches!(events[1], Ok(StreamEvent::TextDelta { .. })));
-        assert!(matches!(events[2], Ok(StreamEvent::ToolCallDelta { .. })));
+        assert!(matches!(events[0], Ok(WireStreamEvent::Usage { .. })));
+        assert!(matches!(events[1], Ok(WireStreamEvent::TextDelta { .. })));
+        assert!(matches!(
+            events[2],
+            Ok(WireStreamEvent::ToolCallDelta { .. })
+        ));
     }
 
     #[test]
@@ -353,7 +356,7 @@ mod tests {
         );
         assert!(matches!(
             events[0],
-            Ok(StreamEvent::ToolCallDelta { index: 1, .. })
+            Ok(WireStreamEvent::ToolCallDelta { index: 1, .. })
         ));
     }
 }

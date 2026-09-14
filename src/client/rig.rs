@@ -17,17 +17,17 @@ impl ClientConfig {
     /// which has the broadest compatibility across local and hosted servers.
     pub fn rig_client(&self) -> Result<RigClient, LlmError> {
         match self.provider {
-            crate::types::common::Provider::OpenAiCompatible => {
+            crate::wire::common::Provider::OpenAiCompatible => {
                 Ok(RigClient::OpenAi(self.rig_openai_client()?))
             }
-            crate::types::common::Provider::Anthropic => {
+            crate::wire::common::Provider::Anthropic => {
                 Ok(RigClient::Anthropic(self.rig_anthropic_client()?))
             }
         }
     }
 
     pub fn rig_openai_client(&self) -> Result<openai::CompletionsClient, LlmError> {
-        if self.provider != crate::types::common::Provider::OpenAiCompatible {
+        if self.provider != crate::wire::common::Provider::OpenAiCompatible {
             return Err(LlmError::Config(
                 "an OpenAI-compatible Rig client requires the OpenAI protocol".into(),
             ));
@@ -54,7 +54,7 @@ impl ClientConfig {
     }
 
     pub fn rig_anthropic_client(&self) -> Result<anthropic::Client, LlmError> {
-        if self.provider != crate::types::common::Provider::Anthropic {
+        if self.provider != crate::wire::common::Provider::Anthropic {
             return Err(LlmError::Config(
                 "an Anthropic Rig client requires the Anthropic protocol".into(),
             ));

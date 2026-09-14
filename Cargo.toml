@@ -1,6 +1,6 @@
 [package]
 name = "llm-relay"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 description = "Shared types, format conversion, and HTTP client for Anthropic and OpenAI LLM APIs"
 authors = ["Danila Gornushko <me@okhsunrog.dev>"]
@@ -31,6 +31,7 @@ futures-util = { version = "0.3.32", optional = true }
 rig = { package = "rig-core", version = "0.40.0", optional = true }
 http = { version = "1.4.2", optional = true }
 tokio = { version = "1.52.4", features = ["time"], optional = true }
+base64 = "0.23.1"
 
 [dev-dependencies]
 tokio = { version = "1.52.4", features = ["macros", "rt-multi-thread", "net", "io-util"] }

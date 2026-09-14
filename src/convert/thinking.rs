@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::types::anthropic::{OutputConfig, ThinkingParam};
-use crate::types::common::{EffortLevel, ThinkingConfig};
+use crate::wire::anthropic::{OutputConfig, ThinkingParam};
+use crate::wire::common::{EffortLevel, ThinkingConfig};
 
 /// Build Anthropic extended thinking API parameters from a ThinkingConfig.
 ///

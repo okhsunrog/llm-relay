@@ -1,10 +1,16 @@
 use tracing::warn;
 
-use crate::types::anthropic::{ContentBlock, Message, MessagesResponse};
-use crate::types::common::{StopReason, ToolDefinition};
-use crate::types::openai::{
-    ChatMessage, ChatResponse, Choice, ResponseMessage, ResponseToolCall, ResponseToolCallFunction,
-    ResponseUsage, Tool, ToolCallFunction, ToolCallOut, ToolFunction,
+#[cfg(feature = "client")]
+use crate::wire::anthropic::Message;
+use crate::wire::anthropic::{ContentBlock, MessagesResponse};
+use crate::wire::common::StopReason;
+#[cfg(feature = "client")]
+use crate::wire::common::ToolDefinition;
+#[cfg(feature = "client")]
+use crate::wire::openai::{ChatMessage, Tool, ToolCallFunction, ToolCallOut, ToolFunction};
+use crate::wire::openai::{
+    ChatResponse, Choice, ResponseMessage, ResponseToolCall, ResponseToolCallFunction,
+    ResponseUsage,
 };
 
 /// Convert Anthropic messages + system prompt to OpenAI message format.
@@ -13,6 +19,7 @@ use crate::types::openai::{
 /// - Assistant text → `content`, ToolUse → `tool_calls` array
 /// - User messages with ToolResult → multiple `role: "tool"` messages
 /// - Thinking blocks are silently skipped
+#[cfg(feature = "client")]
 pub fn messages_to_openai(system: Option<&str>, messages: &[Message]) -> Vec<ChatMessage> {
     let mut out = Vec::new();
 
@@ -109,6 +116,7 @@ pub fn messages_to_openai(system: Option<&str>, messages: &[Message]) -> Vec<Cha
 }
 
 /// Convert provider-agnostic ToolDefinitions to OpenAI tool format.
+#[cfg(feature = "client")]
 pub fn tools_to_openai(tools: &[ToolDefinition]) -> Vec<Tool> {
     tools
         .iter()
@@ -176,7 +184,7 @@ pub fn response_to_anthropic(resp: ChatResponse) -> Result<MessagesResponse, Str
         model: resp.model,
         content,
         stop_reason,
-        usage: resp.usage.map(|u| crate::types::common::Usage {
+        usage: resp.usage.map(|u| crate::wire::common::Usage {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
             cache_creation_input_tokens: u.cache_creation_input_tokens,
@@ -239,7 +247,7 @@ pub fn anthropic_response_to_openai(resp: MessagesResponse) -> ChatResponse {
         cache_read_input_tokens: u.cache_read_input_tokens,
         cost: u.cost,
         completion_tokens_details: (u.reasoning_tokens > 0).then_some(
-            crate::types::openai::CompletionTokensDetails {
+            crate::wire::openai::CompletionTokensDetails {
                 reasoning_tokens: u.reasoning_tokens,
             },
         ),
