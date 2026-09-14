@@ -1,4 +1,4 @@
-//! Stateless compatibility with the subscription Responses transport.
+//! Stateless conversion of completed Responses output and usage.
 // JSON reads return Null for missing fields; writes below target validated or constructed objects.
 #![allow(clippy::indexing_slicing)]
 use crate::Usage;
@@ -35,7 +35,9 @@ fn chat_usage(response: &Value) -> Value {
     json!({"prompt_tokens":u["input_tokens"],"completion_tokens":u["output_tokens"],"total_tokens":u["total_tokens"],"prompt_tokens_details":u["input_tokens_details"],"completion_tokens_details":u["output_tokens_details"]})
 }
 fn finish_reason(response: &Value, tools: bool) -> &'static str {
-    if response["status"] == "incomplete" {
+    if response["incomplete_details"]["reason"] == "content_filter" {
+        "content_filter"
+    } else if response["status"] == "incomplete" {
         "length"
     } else if tools {
         "tool_calls"

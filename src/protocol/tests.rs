@@ -158,3 +158,43 @@ fn system_cache_hint_is_reported() {
     let translated = translate_request(Protocol::Messages, Protocol::Responses, &body).unwrap();
     assert!(translated.enforce(Policy::Strict).is_err());
 }
+
+#[test]
+fn terminal_only_unknown_items_do_not_produce_stream_success() {
+    let mut decoder = Decoder::default();
+    let decoded = decoder
+        .decode(json!({"type":"response.completed","response":{"output":[{"type":"future_item"}]}}))
+        .unwrap();
+    for protocol in [Protocol::Messages, Protocol::ChatCompletions] {
+        assert!(
+            Encoder::new(protocol, "m".into(), false)
+                .encode(&decoded)
+                .is_err()
+        );
+    }
+    assert!(
+        Encoder::new(Protocol::Responses, "m".into(), false)
+            .encode(&decoded)
+            .is_ok()
+    );
+}
+
+#[test]
+fn filtered_completion_has_same_json_and_stream_stop_reason() {
+    let mut decoder = Decoder::default();
+    let decoded = decoder.decode(json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[]}})).unwrap();
+    let Event::Finish(c) = &decoded.event else {
+        panic!("completion expected")
+    };
+    let frames = Encoder::new(Protocol::ChatCompletions, "m".into(), false)
+        .encode(&decoded)
+        .unwrap();
+    assert_eq!(
+        frames[0].data["choices"][0]["finish_reason"],
+        "content_filter"
+    );
+    assert_eq!(
+        c.render(Protocol::ChatCompletions).unwrap()["choices"][0]["finish_reason"],
+        "content_filter"
+    );
+}

@@ -318,6 +318,19 @@ impl Encoder {
         if self.protocol == Protocol::Responses {
             return Ok(vec![Self::frame(decoded.native.clone())]);
         }
+        if matches!(
+            &decoded.event,
+            Event::ItemStart {
+                item: Item::Native { .. },
+                ..
+            } | Event::ItemEnd {
+                item: Item::Native { .. },
+                ..
+            }
+        ) || matches!(&decoded.event, Event::Finish(c) if c.items.iter().any(|i| matches!(i, Item::Native { .. })))
+        {
+            return Err("Native output cannot be represented in target protocol".into());
+        }
         let mut frames = vec![];
         if let Event::Start { id, model, created } = &decoded.event {
             self.id = id.clone();
