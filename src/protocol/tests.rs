@@ -198,3 +198,37 @@ fn filtered_completion_has_same_json_and_stream_stop_reason() {
         "content_filter"
     );
 }
+
+#[test]
+fn responses_conversion_preserves_optional_tool_arguments_and_explicit_strictness() {
+    let schema = json!({"type":"object","properties":{"file_path":{"type":"string"},"pages":{"type":"string"}},"required":["file_path"],"additionalProperties":false});
+    for source in [Protocol::Messages, Protocol::ChatCompletions] {
+        for strict in [None, Some(false), Some(true)] {
+            let mut tool = json!({"name":"Read", if source == Protocol::Messages {"input_schema"} else {"parameters"}:schema});
+            if let Some(value) = strict {
+                tool["strict"] = json!(value);
+            }
+            if source == Protocol::ChatCompletions {
+                tool = json!({"type":"function","function":tool});
+            }
+            let body = json!({"model":"m","messages":[{"role":"user","content":"Read /tmp/README.md"}],"tools":[tool]});
+            let translated = translate_request(source, Protocol::Responses, &body).unwrap();
+            assert_eq!(
+                translated.body["tools"][0]["strict"],
+                strict.unwrap_or(false)
+            );
+            assert_eq!(translated.body["tools"][0]["parameters"], schema);
+        }
+    }
+    let native = json!({"model":"m","input":"read","tools":[{"type":"function","name":"Read","parameters":schema}]});
+    assert_eq!(
+        translate_request(Protocol::Responses, Protocol::Responses, &native)
+            .unwrap()
+            .body,
+        native
+    );
+    assert_eq!(
+        decode_request(Protocol::Responses, &native).unwrap().tools[0].strict,
+        None
+    );
+}

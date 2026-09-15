@@ -523,7 +523,11 @@ pub fn decode_request(protocol: Protocol, body: &Value) -> Result<Request, Strin
                 name: text(t, "name")?,
                 description: t["description"].as_str().map(str::to_owned),
                 parameters,
-                strict: t["strict"].as_bool(),
+                // Responses may normalize omitted strictness into strict mode,
+                // making optional arguments required. Preserve source defaults.
+                strict: t["strict"]
+                    .as_bool()
+                    .or_else(|| (protocol != Protocol::Responses).then_some(false)),
             });
             if t.get("cache_control").is_some() {
                 diagnose(
